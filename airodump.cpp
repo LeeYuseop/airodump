@@ -30,9 +30,11 @@ struct Radiotap{
 	u_int16_t len;
 	u_int32_t present;
 
-	u_int8_t TSFT, flags, dataRate, antennaSig;
+	u_int8_t flags, dataRate, FHSS;
+	int8_t antennaSig;
 	u_int16_t chFreq, chFlag;
 	u_int32_t present2;
+	u_int64_t TSFT;
 };
 
 struct Beacon{
@@ -61,7 +63,9 @@ void printBeaconTable(struct BeaconTable *beaconTable);
 
 struct BeaconTable *findBeacon(struct BeaconTable **beaconTable, u_int8_t *bssid);
 
-void BeaconFrame(struct pcap_pkthdr *header, const u_char *packet, struct BeaconTable **beaconTable);
+struct Radiotap getRadiotap(const u_char *packet);
+
+void BeaconFrame(struct pcap_pkthdr *header, const u_char *packet, struct BeaconTable **beaconTable, struct Radiotap radiotap);
 void ProbeRequest(const u_char *packet);
 void ProbeResponse(const u_char *packet);
 void Acknowledgement(const u_char *packet);
@@ -102,8 +106,10 @@ int main(int argc, char* argv[]) {
 		struct radiotap_header *radiotapHdr = (radiotap_header *)packet;
 //		printf("%d %d %d %d\n", radiotapHdr->it_version, radiotapHdr->it_pad, radiotapHdr->it_len, radiotapHdr->it_present);
 
+		struct Radiotap radiotap = getRadiotap(packet);
+
 		u_int8_t subtype = packet[radiotapHdr->it_len];
-		if(subtype == 0x80) BeaconFrame(header, packet, &beaconTable);
+		if(subtype == 0x80) BeaconFrame(header, packet, &beaconTable, radiotap);
 		else if(subtype == 0x40) ProbeRequest(packet);
 		else if(subtype == 0x50) ProbeResponse(packet);
 		else if(subtype == 0xd4) Acknowledgement(packet);
@@ -141,6 +147,7 @@ void printStr(u_int8_t *str, int len)
 
 void printBeaconTable(struct BeaconTable *beaconTable)
 {
+
 	std::system("clear");
 	printf("\n");
 	printf("CH  1 ][ Elapsed: 6 mins ][ 2020-12-09 20:38 ][ WPA handshake: 64:E5:99:7A:E9:64\n");
@@ -185,7 +192,29 @@ struct BeaconTable *findBeacon(struct BeaconTable **beaconTable, u_int8_t *bssid
 	return ptr;
 }
 
-void BeaconFrame(struct pcap_pkthdr *header, const u_char *packet, struct BeaconTable **beaconTable)
+struct Radiotap getRadiotap(const u_char *packet)
+{
+	struct Radiotap radiotap;
+
+	radiotap.version = ((struct Radiotap *)packet)->version;
+	radiotap.pad = ((struct Radiotap *)packet)->pad;
+	radiotap.len = ((struct Radiotap *)packet)->len;
+	radiotap.present = ((struct Radiotap *)packet)->present;
+	packet = packet + 1 + 1 + 2 + 4;
+
+	if(radiotap.present & 0x80000000){ radiotap.present2 = *((u_int32_t *)packet); packet = packet + 4; }
+	if(radiotap.present & 0x00000001){ radiotap.TSFT = *((u_int64_t *)packet); packet = packet + 8; }
+	if(radiotap.present & 0x00000002){ radiotap.flags = *((u_int8_t *)packet); packet = packet + 1; }
+	if(radiotap.present & 0x00000004){ radiotap.dataRate = *((u_int8_t *)packet); packet = packet + 1; }
+	if(radiotap.present & 0x00000008){ radiotap.chFreq = *((u_int16_t *)packet); packet = packet + 2;
+						  radiotap.chFlag = *((u_int16_t *)packet); packet = packet + 2; }
+	if(radiotap.present & 0x00000010){ radiotap.FHSS = *((u_int8_t *)packet); packet = packet + 1; }
+	if(radiotap.present & 0x00000020){ radiotap.antennaSig = *((int8_t *)packet); packet = packet + 1; }
+
+	return radiotap;
+}
+
+void BeaconFrame(struct pcap_pkthdr *header, const u_char *packet, struct BeaconTable **beaconTable, struct Radiotap radiotap)
 {
 //	printf("Beacon frame\n");
 
@@ -207,8 +236,9 @@ void BeaconFrame(struct pcap_pkthdr *header, const u_char *packet, struct Beacon
 	}
 
 	struct BeaconTable *curr = findBeacon(beaconTable, beacon->bssid);
+
 	curr->beacons++;
-	
+	curr->pwr = radiotap.antennaSig;
 	if(curr->essid == NULL){
 		for(struct Tag *tag=tags; tag != NULL; tag=tag->next){
 			if(tag->number == 0){
@@ -225,7 +255,7 @@ void BeaconFrame(struct pcap_pkthdr *header, const u_char *packet, struct Beacon
 
 void ProbeRequest(const u_char *packet)
 {
-	printf("Probe Request\n");
+//	printf("Probe Request\n");
 }
 void ProbeResponse(const u_char *packet)
 {
